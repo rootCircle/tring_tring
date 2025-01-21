@@ -1,0 +1,5 @@
+# Viz and reports, logs
+*.png
+*.csv
+*.txt
+*.log

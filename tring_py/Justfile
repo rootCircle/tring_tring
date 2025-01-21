@@ -1,0 +1,5 @@
+run:
+  uv run main.py
+
+clean:
+  @rm *.csv *.png *.log
