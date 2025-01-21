@@ -1,69 +1,108 @@
-const { Client } = require('pg');
-const fs = require('node:fs');
+import pkg from "pg";
+const { Client } = pkg;
+import dotenv from "dotenv";
+import Joi from "joi";
+import fs from "node:fs";
+import csvWriter from "csv-writer";
+
+dotenv.config();
+
 const databaseConfig = {
-  database: process.env.DB_NAME || 'postgres',
-  user: process.env.DB_USER || 'postgres',
-  password: process.env.DB_PASS || 'postgres',
-  host: process.env.DB_HOST || 'localhost',
-  port: process.env.DB_PORT || 5432
+	database: process.env.DB_NAME || "postgres",
+	user: process.env.DB_USER || "postgres",
+	password: process.env.DB_PASS || "postgres",
+	host: process.env.DB_HOST || "localhost",
+	port: process.env.DB_PORT || 5432,
 };
 
-async function fetchAndAuditShipments() {
-  const client = new Client(databaseConfig);
-  try {
-    await client.connect();
-    console.log('Connected to the database');
+const validateTemperature = Joi.number().min(-50).max(50);
+const validateYield = Joi.number().min(0).max(10000);
 
-    const query = `
-      WITH updated_shipments AS (
-          UPDATE shipments
-          SET vessel_id = COALESCE(vessel_id, 'UNKNOWN'),
-              actual_arrival_time = COALESCE(actual_arrival_time, expected_arrival_time + INTERVAL '2 hours')
-          WHERE vessel_id IS NULL OR actual_arrival_time IS NULL
-          RETURNING shipment_id, vessel_id, actual_arrival_time
-      ),
-      standardized_ports AS (
-          UPDATE shipments
-          SET origin_port = UPPER(origin_port),
-              destination_port = UPPER(destination_port)
-          WHERE origin_port IS NOT NULL OR destination_port IS NOT NULL
-          RETURNING shipment_id, origin_port, destination_port
-      ),
-      delayed_shipments AS (
-          SELECT shipment_id, vessel_id, expected_arrival_time, actual_arrival_time, origin_port, destination_port
-          FROM shipments
-          WHERE actual_arrival_time > expected_arrival_time
-      )
-      SELECT d.shipment_id, d.vessel_id, d.expected_arrival_time, d.actual_arrival_time, d.origin_port, d.destination_port
-      FROM delayed_shipments d
-      ORDER BY d.actual_arrival_time;
-    `;
+const fetchData = async () => {
+	const client = new Client(databaseConfig);
+	await client.connect();
+	try {
+		const res = await client.query("SELECT * FROM weather_data");
+		const satelliteData = await client.query("SELECT * FROM satellite_data");
+		const cropYields = await client.query("SELECT * FROM crop_yields");
+		return {
+			res: res.rows,
+			satelliteData: satelliteData.rows,
+			cropYields: cropYields.rows,
+		};
+	} catch (error) {
+		console.error("Error fetching data:", error);
+		throw error;
+	} finally {
+		await client.end();
+	}
+};
 
-    const result = await client.query(query);
-    if (result.rows.length === 0) {
-      console.log('No delayed shipments found.');
-      return;
-    }
+const imputeMissingData = (data) => {
+	return data.map((row) => {
+		if (!row.temperature) {
+			const avgTemp =
+				data
+					.filter((d) => d.location === row.location)
+					.map((d) => d.temperature)
+					.reduce((a, b) => a + b, 0) / data.length;
+			row.temperature = avgTemp;
+		}
+		return row;
+	});
+};
 
-    console.log('Found delayed shipments:', result.rows.length);
-    saveToCSV(result.rows);
-  } catch (error) {
-    console.error('Error during database operation:', error);
-  } finally {
-    await client.end();
-    console.log('Disconnected from the database');
-  }
-}
+const normalizeData = (data) => {
+	const maxTemp = Math.max(...data.map((row) => row.temperature));
+	const minTemp = Math.min(...data.map((row) => row.temperature));
+	return data.map((row) => {
+		row.temperature = (row.temperature - minTemp) / (maxTemp - minTemp);
+		return row;
+	});
+};
 
-function saveToCSV(data) {
-  const header = ['shipment_id', 'vessel_id', 'expected_arrival_time', 'actual_arrival_time', 'origin_port', 'destination_port'];
-  const rows = data.map(row => [
-    row.shipment_id, row.vessel_id, row.expected_arrival_time, row.actual_arrival_time, row.origin_port, row.destination_port
-  ]);
+const saveToCSV = (data, filename) => {
+	const writer = csvWriter.createObjectCsvWriter({
+		path: filename,
+		header: [
+			{ id: "location", title: "Location" },
+			{ id: "year", title: "Year" },
+			{ id: "predicted_yield", title: "Predicted Yield" },
+			{ id: "actual_yield", title: "Actual Yield" },
+		],
+	});
 
-  const csvContent = [header, ...rows].map(row => row.join(',')).join('\n');
-  fs.writeFileSync('delayedShipmentsReport.csv', csvContent);
-  console.log('CSV file saved as delayedShipmentsReport.csv');
-}
+	writer.writeRecords(data).then(() => {
+		console.log("CSV file has been written successfully");
+	});
+};
 
-fetchAndAuditShipments();
+const processData = async () => {
+	try {
+		const { res, satelliteData, cropYields } = await fetchData();
+		const validatedData = res.filter(
+			(row) => validateTemperature.validate(row.temperature).error === null,
+		);
+		const imputedData = imputeMissingData(validatedData);
+		const normalizedData = normalizeData(imputedData);
+
+		const yieldData = cropYields.map((row) => {
+			const matchingData = normalizedData.find(
+				(d) => d.location === row.location,
+			);
+			if (matchingData) {
+				row.predicted_yield =
+					0.4 * row.normalized_temperature +
+					0.3 * row.normalized_precipitation +
+					0.3 * row.normalized_vegetation_index;
+			}
+			return row;
+		});
+
+		saveToCSV(yieldData, "output.csv");
+	} catch (error) {
+		console.error("Error processing and visualizing data:", error);
+	}
+};
+
+processData();
