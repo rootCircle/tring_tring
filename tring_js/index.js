@@ -1,11 +1,11 @@
 import pkg from "pg";
-const { Client } = pkg;
-import dotenv from "dotenv";
-import Joi from "joi";
-import fs from "node:fs";
-import csvWriter from "csv-writer";
+import { writeFileSync } from "node:fs";
+import * as dotenv from "dotenv";
+import { format } from "date-fns";
 
 dotenv.config();
+
+const { Client } = pkg;
 
 const databaseConfig = {
 	database: process.env.DB_NAME || "postgres",
@@ -15,94 +15,76 @@ const databaseConfig = {
 	port: process.env.DB_PORT || 5432,
 };
 
-const validateTemperature = Joi.number().min(-50).max(50);
-const validateYield = Joi.number().min(0).max(10000);
+async function detectUnauthorizedAccess(client) {
+	const query = `
+    SELECT u.username, a.timestamp, a.operation, a.affected_policy_id
+    FROM access_logs a
+    JOIN users u ON a.user_id = u.user_id
+    WHERE EXTRACT(HOUR FROM a.timestamp) < 9 OR EXTRACT(HOUR FROM a.timestamp) > 17
+  `;
+	const result = await client.query(query);
+	if (result.rows.length > 0) {
+		console.log("Unauthorized Access Detected:");
+		result.rows.forEach((log) => console.log(log));
+	} else {
+		console.log("No unauthorized access detected.");
+	}
+}
 
-const fetchData = async () => {
+async function generateWeeklyAuditReport(client) {
+	const query = `
+    SELECT 
+      u.username,
+      COUNT(DISTINCT a.affected_policy_id) AS unique_policies_accessed,
+      COUNT(a.operation) FILTER (WHERE a.operation = 'INSERT') AS insert_operations,
+      COUNT(a.operation) FILTER (WHERE a.operation = 'UPDATE') AS update_operations,
+      COUNT(a.operation) FILTER (WHERE a.operation = 'DELETE') AS delete_operations,
+      COUNT(a.operation) FILTER (WHERE a.operation = 'SELECT') AS select_operations
+    FROM users u
+    JOIN access_logs a ON u.user_id = a.user_id
+    GROUP BY u.username
+    ORDER BY unique_policies_accessed DESC
+    LIMIT 5
+  `;
+	const result = await client.query(query);
+	const csvData = result.rows
+		.map((row) => Object.values(row).join(","))
+		.join("\n");
+	const headers =
+		"username,unique_policies_accessed,insert_operations,update_operations,delete_operations,select_operations\n";
+	writeFileSync("./weekly_audit_report.csv", headers + csvData);
+	console.log("Weekly audit report saved to ./weekly_audit_report.csv");
+}
+
+async function backupPolicies(client) {
+	const timestamp = format(new Date(), "yyyyMMdd_HHmmss");
+	const query = "SELECT * FROM policies";
+	const result = await client.query(query);
+	if (result.rows.length === 0) {
+		console.log("No policies to back up.");
+		return;
+	}
+	const csvData = result.rows
+		.map((row) => Object.values(row).join(","))
+		.join("\n");
+	const headers = Object.keys(result.rows[0]).join(",") + "\n";
+	const backupFileName = `./policies_backup_${timestamp}.csv`;
+	writeFileSync(backupFileName, headers + csvData);
+	console.log(`Policies backup saved to ${backupFileName}`);
+}
+
+async function main() {
 	const client = new Client(databaseConfig);
-	await client.connect();
 	try {
-		const res = await client.query("SELECT * FROM weather_data");
-		const satelliteData = await client.query("SELECT * FROM satellite_data");
-		const cropYields = await client.query("SELECT * FROM crop_yields");
-		return {
-			res: res.rows,
-			satelliteData: satelliteData.rows,
-			cropYields: cropYields.rows,
-		};
+		await client.connect();
+		await detectUnauthorizedAccess(client);
+		await generateWeeklyAuditReport(client);
+		await backupPolicies(client);
 	} catch (error) {
-		console.error("Error fetching data:", error);
-		throw error;
+		console.error("An error occurred:", error.message);
 	} finally {
 		await client.end();
 	}
-};
+}
 
-const imputeMissingData = (data) => {
-	return data.map((row) => {
-		if (!row.temperature) {
-			const avgTemp =
-				data
-					.filter((d) => d.location === row.location)
-					.map((d) => d.temperature)
-					.reduce((a, b) => a + b, 0) / data.length;
-			row.temperature = avgTemp;
-		}
-		return row;
-	});
-};
-
-const normalizeData = (data) => {
-	const maxTemp = Math.max(...data.map((row) => row.temperature));
-	const minTemp = Math.min(...data.map((row) => row.temperature));
-	return data.map((row) => {
-		row.temperature = (row.temperature - minTemp) / (maxTemp - minTemp);
-		return row;
-	});
-};
-
-const saveToCSV = (data, filename) => {
-	const writer = csvWriter.createObjectCsvWriter({
-		path: filename,
-		header: [
-			{ id: "location", title: "Location" },
-			{ id: "year", title: "Year" },
-			{ id: "predicted_yield", title: "Predicted Yield" },
-			{ id: "actual_yield", title: "Actual Yield" },
-		],
-	});
-
-	writer.writeRecords(data).then(() => {
-		console.log("CSV file has been written successfully");
-	});
-};
-
-const processData = async () => {
-	try {
-		const { res, satelliteData, cropYields } = await fetchData();
-		const validatedData = res.filter(
-			(row) => validateTemperature.validate(row.temperature).error === null,
-		);
-		const imputedData = imputeMissingData(validatedData);
-		const normalizedData = normalizeData(imputedData);
-
-		const yieldData = cropYields.map((row) => {
-			const matchingData = normalizedData.find(
-				(d) => d.location === row.location,
-			);
-			if (matchingData) {
-				row.predicted_yield =
-					0.4 * row.normalized_temperature +
-					0.3 * row.normalized_precipitation +
-					0.3 * row.normalized_vegetation_index;
-			}
-			return row;
-		});
-
-		saveToCSV(yieldData, "output.csv");
-	} catch (error) {
-		console.error("Error processing and visualizing data:", error);
-	}
-};
-
-processData();
+main();

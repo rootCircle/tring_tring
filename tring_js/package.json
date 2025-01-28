@@ -13,12 +13,22 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
+    "csv-write-stream": "^2.0.0",
     "csv-writer": "^1.6.0",
+    "d3-scale": "^4.0.2",
+    "data-fns": "^1.1.0",
+    "date-fns": "^4.1.0",
     "dotenv": "^16.4.7",
+    "fast-csv": "^5.0.2",
     "joi": "^17.13.3",
     "json2csv": "^6.0.0-alpha.2",
     "knex": "^3.1.0",
+    "mljs": "^8.0.9",
+    "pandas-js": "^0.2.4",
+    "papaparse": "^5.5.1",
     "pg": "^8.13.1",
-    "plotly": "^1.0.6"
+    "plotly": "^1.0.6",
+    "sequelize": "^6.37.5",
+    "ws": "^8.18.0"
   }
 }
