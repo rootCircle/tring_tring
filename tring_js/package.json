@@ -27,7 +27,8 @@
     "pandas-js": "^0.2.4",
     "papaparse": "^5.5.1",
     "pg": "^8.13.1",
-    "plotly": "^1.0.6",
+    "plotly.js": "^3.0.0",
+    "plotly.js-dist": "^3.0.0",
     "sequelize": "^6.37.5",
     "ws": "^8.18.0"
   }

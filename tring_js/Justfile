@@ -1,7 +1,14 @@
 run:
-  bun run dev
+    @echo "Starting the development server..."
+    bun run dev
+
 clean:
-	@rm *.png *.csv *.log
+    @echo "Cleaning up files..."
+    @rm -f *.png *.csv *.log
+    @echo "Cleaned up files."
 
 clean_sql:
-  psql -U postgres -d postgres -f scripts/clean_table.sql
+    @echo "Cleaning up database tables..."
+    psql -U postgres -d postgres -f scripts/clean_table.sql
+    @echo "Database tables cleaned."
+

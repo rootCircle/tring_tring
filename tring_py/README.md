@@ -1,4 +1,9 @@
-**Introducing `uv` – The Fast Python Package Manager**  
+# tring_py
+
+> [!WARNING]
+> clean_sql script(make/just) will remove all the tables and types from the database, so use at caution
+
+## A bit of uv
 
 `uv` is an exceptionally fast Python package manager that works similarly to Node.js with its `package.json`. While Python has tools like `requirements.txt` and the newer `pyproject.toml`, `uv` takes things further by managing your entire environment for you. From handling the Python version to managing your dependencies, `uv` simplifies the process and provides a seamless experience.
 
@@ -39,4 +44,5 @@ docker run -it --rm -p 5432:5432 postgres:17-alpine psql -U postgres
 ```
 
 With this setup, you can easily experiment with your database queries locally or integrate them into your project.  
+
 

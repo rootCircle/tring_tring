@@ -1,5 +1,13 @@
 run:
-  uv run main.py
+   uv run main.py 
 
 clean:
-  @rm *.csv *.png *.log
+    @echo "Cleaning up files..."
+    @rm -f *.png *.csv *.log
+    @echo "Cleaned up files."
+
+clean_sql:
+    @echo "Cleaning up database tables..."
+    psql -U postgres -d postgres -f scripts/clean_table.sql
+    @echo "Database tables cleaned."
+

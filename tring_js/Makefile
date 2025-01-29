@@ -1,6 +1,20 @@
+FILE_EXTENSIONS = *.png *.csv *.log
+CLEAN_SQL_SCRIPT = scripts/clean_table.sql
+DB_USER = postgres
+DB_NAME = postgres
+
+.PHONY: run clean clean_sql
+
 run:
 	bun run dev
+
 clean:
-	@rm *.png *.csv *.log
+	@echo "Cleaning up files..."
+	@rm -f $(FILE_EXTENSIONS)
+	@echo "Cleaned up files."
+
 clean_sql:
-	psql -U postgres -d postgres -f scripts/clean_table.sql
+	@echo "Cleaning up database tables..."
+	psql -U $(DB_USER) -d $(DB_NAME) -f $(CLEAN_SQL_SCRIPT)
+	@echo "Database tables cleaned."
+
