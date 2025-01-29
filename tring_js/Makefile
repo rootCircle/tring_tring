@@ -3,10 +3,13 @@ CLEAN_SQL_SCRIPT = scripts/clean_table.sql
 DB_USER = postgres
 DB_NAME = postgres
 
-.PHONY: run clean clean_sql
+.PHONY: run check clean clean_sql
 
 run:
 	bun run dev
+
+check:
+	bun run check
 
 clean:
 	@echo "Cleaning up files..."

@@ -1,6 +1,9 @@
 run:
-    @echo "Starting the development server..."
     bun run dev
+
+check:
+    @echo Fixing format and lint issues
+    bun run check
 
 clean:
     @echo "Cleaning up files..."
