@@ -9,7 +9,7 @@ bun install
 To run:
 
 ```bash
-bun run index.ts
+node index.js
 ```
 
 I personally use `just run` or `make run`. For cleaning the mess, use `just clean && just clean_sql`. (just clean_sql will remove all the tables and types from your database, so it's destructive)

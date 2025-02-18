@@ -14,6 +14,7 @@ check:
 clean:
 	@echo "Cleaning up files..."
 	@rm -f $(FILE_EXTENSIONS)
+	@find . -maxdepth 1 -type f -name "*.json" ! -name "package.json" ! -name "biome.json" ! -name "tsconfig.json" -delete
 	@echo "Cleaned up files."
 
 clean_sql:
