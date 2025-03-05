@@ -90,7 +90,6 @@
         "noCatchAssign": "error",
         "noClassAssign": "error",
         "noCompareNegZero": "error",
-        "noConsole": "error",
         "noControlCharactersInRegex": "error",
         "noDebugger": "error",
         "noDoubleEquals": "error",
