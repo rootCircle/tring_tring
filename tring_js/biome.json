@@ -20,12 +20,8 @@
     "lineWidth": 80,
     "attributePosition": "auto",
     "bracketSpacing": true,
-    "include": [
-      "**/*.{js,jsx,ts,tsx,json,md,html,css}"
-    ],
-    "ignore": [
-      "node_modules/"
-    ]
+    "include": ["**/*.{js,jsx,ts,tsx,json,md,html,css}"],
+    "ignore": ["node_modules/"]
   },
   "organizeImports": {
     "enabled": true
@@ -118,11 +114,7 @@
         "useValidTypeof": "error"
       }
     },
-    "ignore": [
-      "build/",
-      "node_modules/",
-      "eslint.config.js"
-    ]
+    "ignore": ["build/", "node_modules/", "eslint.config.js"]
   },
   "javascript": {
     "formatter": {
@@ -140,17 +132,10 @@
   },
   "overrides": [
     {
-      "include": [
-        "**/*.{js,mjs,cjs,ts}"
-      ]
+      "include": ["**/*.{js,mjs,cjs,ts}"]
     },
     {
-      "include": [
-        "**/*.ts",
-        "**/*.tsx",
-        "**/*.mts",
-        "**/*.cts"
-      ],
+      "include": ["**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"],
       "linter": {
         "rules": {
           "correctness": {

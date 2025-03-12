@@ -1,82 +1,86 @@
-import fs from "node:fs";
-import dotenv from "dotenv";
-import { parse } from "json2csv";
-import pkg from "pg";
+import fs from "node:fs";  
+import dotenv from "dotenv";  
+import pkg from "pg";  
+import { WebSocketServer } from "ws";  
+  
+dotenv.config();  
+const { Client } = pkg;  
+  
+const databaseConfig = {  
+  database: process.env.DB_NAME || "postgres",  
+  user: process.env.DB_USER || "postgres",  
+  password: process.env.DB_PASS || "postgres",  
+  host: process.env.DB_HOST || "localhost",  
+  port: process.env.DB_PORT || 5432,  
+};  
+  
+const ws = new WebSocketServer({ port: 8080 });  
+  
+async function fetchRealTimeData() {  
+  const client = new Client(databaseConfig);  
+  try {  
+    await client.connect();  
+    const query = `  
+      SELECT project_name, SUM(emission_value) AS total_emissions,  
+             SUM(quantity_wasted) AS total_material_waste,  
+             SUM(energy_used) AS total_energy_consumption,  
+             NOW() AS recorded_at  
+      FROM (  
+          SELECT project_name, emission_value, 0 AS quantity_wasted, 0 AS energy_used FROM carbon_emissions  
+          UNION ALL  
+          SELECT project_name, 0, quantity_wasted, 0 FROM material_usage  
+          UNION ALL  
+          SELECT project_name, 0, 0, energy_used FROM energy_consumption  
+      ) AS combined_data  
+      GROUP BY project_name  
+      ORDER BY recorded_at DESC  
+    `;  
+    const result = await client.query(query);  
+    return result.rows;  
+  } catch (error) {  
+    console.error("Database Error:", error);  
+    return [];  
+  } finally {  
+    await client.end();  
+  }  
+}  
+  
+function detectAnomalies(data, threshold = 1.5) {  
+  return data.filter((item) => {  
+    const averageImpact = (item.total_emissions + item.total_material_waste + item.total_energy_consumption) / 3;  
+    return item.total_emissions > averageImpact * threshold ||  
+           item.total_material_waste > averageImpact * threshold ||  
+           item.total_energy_consumption > averageImpact * threshold;  
+  });  
+}  
+  
+function generateImpactReport(data) {  
+  const report = JSON.stringify({ timestamp: new Date(), projects: data }, null, 2);  
+  fs.writeFileSync("./impact_report.json", report);  
+  console.log("Impact report generated: ./impact_report.json");  
+}  
+  
+async function processRealTimeMonitoring() {  
+  const data = await fetchRealTimeData();  
+  if (data.length === 0) {  
+    console.log("No data available for processing.");  
+    return;  
+  }  
+  const anomalies = detectAnomalies(data);  
+  generateImpactReport(data);  
+  ws.clients.forEach((client) => {  
+    if (client.readyState === 1) {  
+      client.send(JSON.stringify({ data, anomalies }));  
+    }  
+  });  
+  console.log("Real-time data streamed to connected clients.");  
+}  
+  
+processRealTimeMonitoring();
 
-dotenv.config();
-const { Client } = pkg;
+setTimeout(() => {
+  ws.close(() => {
+    console.log("WebSocket server closed after 5 seconds.");
+  });
+}, 5000);
 
-const databaseConfig = {
-  database: process.env.DB_NAME || "postgres",
-  user: process.env.DB_USER || "postgres",
-  password: process.env.DB_PASS || "postgres",
-  host: process.env.DB_HOST || "localhost",
-  port: process.env.DB_PORT || 5432,
-};
-
-const preprocessData = (data) => {
-  if (!Array.isArray(data) || data.length === 0) return [];
-  const validData = data
-    .filter((entry) => entry.region && entry.crop_id && entry.harvest_date)
-    .map((entry) => ({
-      ...entry,
-      harvest_date: new Date(entry.harvest_date).toISOString().split("T")[0],
-      yield_amount: Number.parseFloat(entry.yield_amount) || 0,
-    }));
-  const minYield = Math.min(...validData.map((d) => d.yield_amount));
-  const maxYield = Math.max(...validData.map((d) => d.yield_amount));
-  return validData.map((entry) => ({
-    ...entry,
-    normalized_yield:
-      maxYield !== minYield
-        ? (entry.yield_amount - minYield) / (maxYield - minYield)
-        : 0,
-  }));
-};
-
-const generateSQLQuery = ({ cropType, region, startDate, endDate }) => {
-  let query = `
-    SELECT y.crop_id, c.name AS crop_name, y.region, y.harvest_date,
-           y.yield_amount, e.temperature, e.rainfall, e.soil_moisture
-    FROM yield_data y
-    JOIN crops c ON y.crop_id = c.id
-    LEFT JOIN environmental_factors e
-      ON y.region = e.region AND y.harvest_date = e.date
-  `;
-  const conditions = [];
-  if (cropType) conditions.push(`c.name = '${cropType}'`);
-  if (region) conditions.push(`y.region = '${region}'`);
-  if (startDate) conditions.push(`y.harvest_date >= '${startDate}'`);
-  if (endDate) conditions.push(`y.harvest_date <= '${endDate}'`);
-  if (conditions.length) query += ` WHERE ${conditions.join(" AND ")}`;
-  return query;
-};
-
-const fetchAndProcessData = async (params, exportFormat) => {
-  const client = new Client(databaseConfig);
-  try {
-    await client.connect();
-    const query = generateSQLQuery(params);
-    const result = await client.query(query);
-    if (!result.rows.length) throw new Error("No data found.");
-    const processedData = preprocessData(result.rows);
-    if (exportFormat === "csv") {
-      fs.writeFileSync("./crop_yield_analysis.csv", parse(processedData));
-      console.log("CSV file saved at ./crop_yield_analysis.csv");
-    } else if (exportFormat === "json") {
-      fs.writeFileSync("./crop_yield_analysis.json", JSON.stringify(processedData, null, 2));
-      console.log("JSON file saved at ./crop_yield_analysis.json");
-    }
-    console.log("Data processing complete.");
-    return processedData;
-  } catch (error) {
-    console.error("Error:", error.message);
-  } finally {
-    await client.end();
-  }
-};
-
-fetchAndProcessData(
-  { cropType: "Wheat", region: "Midwest", startDate: "2020-01-01", endDate: "2023-01-01" },
-  "csv"
-);
