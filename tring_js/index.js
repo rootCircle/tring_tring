@@ -1,86 +1,87 @@
-import fs from "node:fs";  
-import dotenv from "dotenv";  
-import pkg from "pg";  
-import { WebSocketServer } from "ws";  
-  
-dotenv.config();  
-const { Client } = pkg;  
-  
-const databaseConfig = {  
-  database: process.env.DB_NAME || "postgres",  
-  user: process.env.DB_USER || "postgres",  
-  password: process.env.DB_PASS || "postgres",  
-  host: process.env.DB_HOST || "localhost",  
-  port: process.env.DB_PORT || 5432,  
-};  
-  
-const ws = new WebSocketServer({ port: 8080 });  
-  
-async function fetchRealTimeData() {  
-  const client = new Client(databaseConfig);  
-  try {  
-    await client.connect();  
-    const query = `  
-      SELECT project_name, SUM(emission_value) AS total_emissions,  
-             SUM(quantity_wasted) AS total_material_waste,  
-             SUM(energy_used) AS total_energy_consumption,  
-             NOW() AS recorded_at  
-      FROM (  
-          SELECT project_name, emission_value, 0 AS quantity_wasted, 0 AS energy_used FROM carbon_emissions  
-          UNION ALL  
-          SELECT project_name, 0, quantity_wasted, 0 FROM material_usage  
-          UNION ALL  
-          SELECT project_name, 0, 0, energy_used FROM energy_consumption  
-      ) AS combined_data  
-      GROUP BY project_name  
-      ORDER BY recorded_at DESC  
-    `;  
-    const result = await client.query(query);  
-    return result.rows;  
-  } catch (error) {  
-    console.error("Database Error:", error);  
-    return [];  
-  } finally {  
-    await client.end();  
-  }  
-}  
-  
-function detectAnomalies(data, threshold = 1.5) {  
-  return data.filter((item) => {  
-    const averageImpact = (item.total_emissions + item.total_material_waste + item.total_energy_consumption) / 3;  
-    return item.total_emissions > averageImpact * threshold ||  
-           item.total_material_waste > averageImpact * threshold ||  
-           item.total_energy_consumption > averageImpact * threshold;  
-  });  
-}  
-  
-function generateImpactReport(data) {  
-  const report = JSON.stringify({ timestamp: new Date(), projects: data }, null, 2);  
-  fs.writeFileSync("./impact_report.json", report);  
-  console.log("Impact report generated: ./impact_report.json");  
-}  
-  
-async function processRealTimeMonitoring() {  
-  const data = await fetchRealTimeData();  
-  if (data.length === 0) {  
-    console.log("No data available for processing.");  
-    return;  
-  }  
-  const anomalies = detectAnomalies(data);  
-  generateImpactReport(data);  
-  ws.clients.forEach((client) => {  
-    if (client.readyState === 1) {  
-      client.send(JSON.stringify({ data, anomalies }));  
-    }  
-  });  
-  console.log("Real-time data streamed to connected clients.");  
-}  
-  
-processRealTimeMonitoring();
+import dotenv from 'dotenv';
+import pkg from 'pg';
 
-setTimeout(() => {
-  ws.close(() => {
-    console.log("WebSocket server closed after 5 seconds.");
-  });
-}, 5000);
+const { Client } = pkg;
+dotenv.config();
+
+const databaseConfig = {
+  database: process.env.DB_NAME || 'postgres',
+  user: process.env.DB_USER || 'postgres',
+  password: process.env.DB_PASS || 'postgres',
+  host: process.env.DB_HOST || 'localhost',
+  port: process.env.DB_PORT || 5432,
+};
+
+const MAX_CLAIM_AMOUNT = 50000;
+
+const client = new Client(databaseConfig);
+
+async function updateRiskScores() {
+  try {
+    await client.connect();
+
+    const result = await client.query(`
+      WITH fraud_counts AS (
+        SELECT policyholder_id, COUNT(*) AS fraud_claims
+        FROM fraud_detections
+        WHERE flagged_at >= NOW() - INTERVAL '6 months'
+        GROUP BY policyholder_id
+        HAVING COUNT(*) > 2
+      ),
+      claim_stats AS (
+        SELECT
+          c.policyholder_id,
+          COUNT(*) AS total_claims,
+          AVG(c.claim_amount) AS avg_claim_amount,
+          SUM(CASE WHEN c.status = 'FRAUD_SUSPECTED' THEN 1 ELSE 0 END) * 100.0 / COUNT(*) AS fraud_percentage,
+          SUM(CASE WHEN c.status = 'FRAUD_SUSPECTED' AND c.claim_date >= NOW() - INTERVAL '3 months' THEN 1 ELSE 0 END) AS recent_frauds
+        FROM claims c
+        GROUP BY c.policyholder_id
+      )
+      SELECT
+        p.id AS policyholder_id,
+        p.name,
+        f.fraud_claims,
+        cs.total_claims,
+        cs.avg_claim_amount,
+        cs.fraud_percentage,
+        cs.recent_frauds
+      FROM fraud_counts f
+      JOIN claim_stats cs ON f.policyholder_id = cs.policyholder_id
+      JOIN policyholders p ON f.policyholder_id = p.id;
+    `);
+
+    if (result.rows.length === 0) {
+      console.log('No policyholders with sufficient fraud claims were found.');
+    } else {
+      for (const row of result.rows) {
+        const fraudPercentage = Number.parseFloat(row.fraud_percentage) || 0;
+        const avgClaimAmount = Number.parseFloat(row.avg_claim_amount) || 0;
+        const recentFraudRate = row.total_claims > 0
+          ? (Number.parseInt(row.recent_frauds) / Number.parseInt(row.total_claims)) * 100
+          : 0;
+
+        const weightedScore =
+          (fraudPercentage * 0.5) +
+          ((avgClaimAmount / MAX_CLAIM_AMOUNT) * 100 * 0.3) +
+          (recentFraudRate * 0.2);
+
+        await client.query(`
+          UPDATE policyholders
+          SET risk_score = $1
+          WHERE id = $2
+        `, [weightedScore.toFixed(2), row.policyholder_id]);
+
+        console.log(`Updated risk score for ${row.name}: ${weightedScore.toFixed(2)}`);
+      }
+    }
+
+  } catch (error) {
+    console.error('Error processing risk score updates:', error);
+  } finally {
+    await client.end();
+  }
+}
+
+updateRiskScores();
 
